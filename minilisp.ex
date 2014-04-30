@@ -1,21 +1,12 @@
-defmodule Lisp do
-  def env do
-    %{+: fn [h] -> h
-            [h|t] -> Enum.reduce(t, h, &Kernel.+/2)
-         end,
-      -: fn [h] -> -h
-            [h|t] -> Enum.reduce(t, h, &(&2 - &1))
-         end}
-  end
-
-  def env(parent) do
+defmodule Env do
+  def new(parent \\ nil) do
     %{parent: parent}
   end
-
+  
   def bind(env, name, val) do
     Map.put(env, name, val)
   end
-
+  
   def fetch(env, key) do
     r = Map.get(env, key)
     case {r, Map.get(env, :parent)} do
@@ -27,14 +18,28 @@ defmodule Lisp do
         v
     end
   end
+end
+
+defmodule Lisp do
+  def root_env do
+    [+: fn [h] -> h
+           [h|t] -> Enum.reduce(t, h, &Kernel.+/2)
+        end,
+     -: fn [h] -> -h
+           [h|t] -> Enum.reduce(t, h, &(&2 - &1))
+        end]
+    |> Enum.reduce(Env.new, fn({k, v}, e) when is_atom(k) ->
+                                Env.bind(e, k, v)
+                            end)
+  end
 
   def eval(e) do
-    {r, _} = eval(e, env)
+    {r, _} = eval(e, root_env)
     r
   end
 
   def eval(c, env) when is_atom(c) do
-    {fetch(env, c), env}
+    {Env.fetch(env, c), env}
   end
   def eval([:lambda | t], env) do
     f = fn rp ->
@@ -43,9 +48,9 @@ defmodule Lisp do
              # 
              loc_env = 
                Enum.zip(fp, rp)
-               |> Enum.reduce(Lisp.env(env), fn({k, v}, acc) ->
-                                                 Lisp.bind(acc, k, v)
-                                             end)
+               |> Enum.reduce(Env.new(env), fn({k, v}, acc) ->
+                                                Env.bind(acc, k, v)
+                                            end)
              # Evaluation of the function body
              # lambda return value is the evaluation value of the last expression
              # 
@@ -60,10 +65,10 @@ defmodule Lisp do
     f = fn _ ->
              loc_env =
                Enum.chunk(bindings, 2)
-               |> Enum.reduce(Lisp.env(env), fn([k, b], acc) when is_atom(k) ->
-                                                 {r, _} = Lisp.eval(b, env)
-                                                 Lisp.bind(acc, k, r)
-                                             end)
+               |> Enum.reduce(Env.new(env), fn([k, b], acc) when is_atom(k) ->
+                                                {r, _} = Lisp.eval(b, env)
+                                                Env.bind(acc, k, r)
+                                            end)
              [{r, _} | _] = 
                for e <- code do Lisp.eval(e, loc_env) end
                |> Enum.reverse
