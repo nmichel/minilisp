@@ -1,3 +1,82 @@
+defmodule Tokenizer do
+  def tokens(path) do
+		Enum.reduce(File.stream!(path, [], :line), [], fn l, acc ->
+																												tokens(l, acc)
+																									 end)
+		|> Enum.reverse
+  end
+  defp tokens("", acc) do
+		acc
+	end
+  defp tokens(e, acc) do
+		[h | [t]] = Regex.run(re, e, [capture: :all_but_first])
+		tokens(t, [Atomizer.atom(h) | acc])
+	end
+	defp re do
+		~r/\s*(,@|[('`,)]|"(?:[\\].|[^\\"])*"|;.*|[^\s('"`,;)]*)(.*)/ #"
+  end
+end
+
+defmodule Atomizer do
+	def atom("+") do :+ end # Corner cases, because binary_to_integer("+") => 0
+	def atom("-") do :- end # same
+	def atom(e = <<?", t::binary>>) do #"
+    l = byte_size(t)-1
+		<<s :: [size(l), binary], "\"">> = t
+		s
+	end
+	def atom(e) do
+		try do
+			binary_to_float(e)
+		catch 
+			_, _ ->
+				try do
+					binary_to_integer(e)
+				catch
+					_, _ ->
+						binary_to_atom(e)
+				end
+		end
+	end
+end
+
+defmodule Parser do
+	def parse(tokens) do
+		case parse(tokens, []) do
+			{[], acc} ->
+				Enum.reverse(acc)
+			{t, acc} ->
+				acc ++ parse(t)
+		end
+	end
+	def parse([], acc) do
+		{[], Enum.reverse(acc)}
+	end
+	def parse([:'(' | t], acc) do
+		{rem, ast} = parse_sexp(t, [])
+		parse(rem, [Enum.reverse(ast) | acc])
+	end
+	def parse(e = [:')' | t], acc) do
+		{e, acc}
+	end
+	def parse([e | t], acc) do
+		{t, [e | acc]}
+	end
+
+	def parse_sexp([], acc) do
+		{[], acc}
+	end
+	def parse_sexp(t, acc) do
+		{rem, ast} = parse(t, acc)
+		case rem do
+			[:')' | r] ->
+				{r, ast}
+			_ ->
+				parse_sexp(rem, ast)
+		end
+	end
+end
+
 defmodule Env do
   def new(parent \\ nil) do
     %{parent: parent}
@@ -20,7 +99,7 @@ defmodule Env do
   end
 end
 
-defmodule Lisp do
+defmodule Evaluator do
   def root_env do
     [+: fn [h] -> h
            [h|t] -> Enum.reduce(t, h, &Kernel.+/2)
@@ -55,7 +134,7 @@ defmodule Lisp do
              # lambda return value is the evaluation value of the last expression
              # 
              [{r, _} | _] = 
-               for e <- el do Lisp.eval(e, loc_env) end
+               for e <- el do Evaluator.eval(e, loc_env) end
                |> Enum.reverse
              r
         end
@@ -66,22 +145,22 @@ defmodule Lisp do
              loc_env =
                Enum.chunk(bindings, 2)
                |> Enum.reduce(Env.new(env), fn([k, b], acc) when is_atom(k) ->
-                                                {r, _} = Lisp.eval(b, env)
+                                                {r, _} = Evaluator.eval(b, env)
                                                 Env.bind(acc, k, r)
                                             end)
              [{r, _} | _] = 
-               for e <- code do Lisp.eval(e, loc_env) end
+               for e <- code do Evaluator.eval(e, loc_env) end
                |> Enum.reverse
              r
         end
     {f, env}
   end
   def eval([h | t], env) do
-    {f, loc_env} = Lisp.eval(h, env)
+    {f, loc_env} = Evaluator.eval(h, env)
     ps =
       for p <- t do eval(p, loc_env) end
       |> Enum.map fn {v, _} -> v end
-    r = Lisp.apply(f, ps)
+    r = Evaluator.apply(f, ps)
     {r, env}
   end
   def eval(c, env) do
@@ -91,6 +170,17 @@ defmodule Lisp do
   def apply(f, p) do
     Kernel.apply(f, [p])
   end
+end
+
+defmodule Minilisp do
+	def play(path) do
+		tokens = Tokenizer.tokens(path)
+		Parser.parse(tokens)
+		|> Enum.reduce(nil, fn(e, _) ->
+														Evaluator.eval(e)
+												end)
+		
+	end
 end
 
 #(define symb 42)
@@ -111,46 +201,46 @@ end
 #    :x, :y]],
 #  1, 2]
 
-43 = Lisp.eval([[:define,
-                 # bindings
-                 [:foo, 42,
-                  :bar, [:lambda, [:a, :b], [:+, :a, :b]]],
-                 # code
-                 [:+, :foo, 1],
-                 [:bar, :foo, 1]]]) # invoke locally bound :bar, with :foo and 1 as paremeters
+43 = Evaluator.eval([[:define,
+											# bindings
+											[:foo, 42,
+											 :bar, [:lambda, [:a, :b], [:+, :a, :b]]],
+											# code
+											[:+, :foo, 1],
+											[:bar, :foo, 1]]]) # invoke locally bound :bar, with :foo and 1 as paremeters
 
-6 = Lisp.eval([[:define,
-                # bindings
-                [:foo, 42,
-                 :bar, [:lambda, [:a, :b], [:+, :a, :b, 4]]],
-                # code
-                [:+, :foo, [:bar, 1, 2]],
-                
-                # nested :define
-                [[:define,
-                  [:foo, 1,
-                   :neh, [:lambda, [:a, :f], [:f, :a, :a]]],
-                  [:neh, :foo, :bar]
-                 ]
-                ] # evaluate function returned by nested :define
-               ]
-              ] # evaluate function returned by nested :define
-             )
+6 = Evaluator.eval([[:define,
+										 # bindings
+										 [:foo, 42,
+											:bar, [:lambda, [:a, :b], [:+, :a, :b, 4]]],
+										 # code
+										 [:+, :foo, [:bar, 1, 2]],
+										 
+										 # nested :define
+										 [[:define,
+											 [:foo, 1,
+												:neh, [:lambda, [:a, :f], [:f, :a, :a]]],
+											 [:neh, :foo, :bar]
+											]
+										 ] # evaluate function returned by nested :define
+										]
+									 ] # evaluate function returned by nested :define
+									)
 
 44 =
-  Lisp.eval([[:define,
-              # bindings
-              [:foo, 42,
-               :bar, [:lambda, [:a, :b, :foo], [:+, :a, :b, :foo]]], # in lambda, :foo evaluates to the parameter value, *NOT* 42 (shadowing)
-              
-              # code
-              # nested :define
-              [[:define,
-                [:foo, 1,
-                 :neh, [:lambda, [:a, :f], [:f, :a, :a, :foo]]], # :foo evaluates to 42, *NOT* 1
-                [:neh, :foo, :bar] # :foo evaluates to 1 (shadowing)
-               ]
-              ] # evaluate function returned by nested :define
-             ]
-            ] # evaluate function returned by nested :define
-           )
+  Evaluator.eval([[:define,
+									 # bindings
+									 [:foo, 42,
+										:bar, [:lambda, [:a, :b, :foo], [:+, :a, :b, :foo]]], # in lambda, :foo evaluates to the parameter value, *NOT* 42 (shadowing)
+										 
+										 # code
+										 # nested :define
+										 [[:define,
+											 [:foo, 1,
+												:neh, [:lambda, [:a, :f], [:f, :a, :a, :foo]]], # :foo evaluates to 42, *NOT* 1
+												 [:neh, :foo, :bar] # :foo evaluates to 1 (shadowing)
+											]
+										 ] # evaluate function returned by nested :define
+									]
+								 ] # evaluate function returned by nested :define
+								)
