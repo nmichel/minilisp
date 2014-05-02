@@ -44,29 +44,29 @@ defmodule Parser do
 	def parse(tokens) do
 		case parse(tokens, []) do
 			{[], acc} ->
-				Enum.reverse(acc)
+				acc
 			{t, acc} ->
-				acc ++ parse(t)
+				parse(t) ++ acc
 		end
 	end
-	def parse([], acc) do
+	defp parse([], acc) do
 		{[], Enum.reverse(acc)}
 	end
-	def parse([:'(' | t], acc) do
+	defp parse([:'(' | t], acc) do
 		{rem, ast} = parse_sexp(t, [])
 		parse(rem, [Enum.reverse(ast) | acc])
 	end
-	def parse(e = [:')' | t], acc) do
+	defp parse(e = [:')' | t], acc) do
 		{e, acc}
 	end
-	def parse([e | t], acc) do
+	defp parse([e | t], acc) do
 		{t, [e | acc]}
 	end
 
-	def parse_sexp([], acc) do
+	defp parse_sexp([], acc) do
 		{[], acc}
 	end
-	def parse_sexp(t, acc) do
+	defp parse_sexp(t, acc) do
 		{rem, ast} = parse(t, acc)
 		case rem do
 			[:')' | r] ->
@@ -106,7 +106,45 @@ defmodule Evaluator do
         end,
      -: fn [h] -> -h
            [h|t] -> Enum.reduce(t, h, &(&2 - &1))
-        end]
+        end,
+     and: fn [a|t] ->
+               Enum.reduce(t, a, &Kernel.and/2)
+          end,
+     or: fn [a|t] ->
+              Enum.reduce(t, a, &Kernel.or/2)
+         end,
+     list: fn p ->
+                p
+           end,
+     list?: fn [x] when is_list(x) ->
+                 true
+               [_] ->
+                 false
+            end,
+     empty?: fn [[]] ->
+                  true
+                [[_h|_t]]->
+                  false
+             end,
+     car: fn [[h|t]] ->
+               h
+          end,
+     cdr: fn [[h|t]] ->
+               t
+          end,
+     ==: fn [a,b|t] ->
+              a == b
+         end,
+     if: fn [c, t, e | _] ->
+              case c do
+                true -> t
+                _ -> e
+              end
+         end,
+     print: fn p ->
+                 IO.puts [inspect(p)]
+            end
+    ]
     |> Enum.reduce(Env.new, fn({k, v}, e) when is_atom(k) ->
                                 Env.bind(e, k, v)
                             end)
@@ -117,6 +155,9 @@ defmodule Evaluator do
     r
   end
 
+  def eval(e, env) when is_boolean(e) do # true and false are boolean AND atom
+    {e, env}
+  end
   def eval(c, env) when is_atom(c) do
     {Env.fetch(env, c), env}
   end
