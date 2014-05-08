@@ -1,3 +1,10 @@
+# In this implementation, "if" is a builtin function, *NOT* a special form. As such, when called, 
+# all its parameters are evaluated first : condition, then and else clauses. This is NOT a good idea : it is
+# inefficient, and can yield to strange behaviour, especially when it comes to IO.
+# 
+# As a matter of fact, "if" must be a special form :)
+
+
 defmodule Tokenizer do
   def tokens(path) do
 		Enum.reduce(File.stream!(path, [], :line), [], fn l, acc ->
@@ -10,7 +17,16 @@ defmodule Tokenizer do
 	end
   defp tokens(e, acc) do
 		[h | [t]] = Regex.run(re, e, [capture: :all_but_first])
-		tokens(t, [Atomizer.atom(h) | acc])
+		acc = 
+			case h do
+				"" ->
+					acc
+				<<";",  _::bitstring>> ->
+					acc
+				_ ->
+					[Atomizer.atom(h) | acc]
+			end
+		tokens(t, acc)
 	end
 	defp re do
 		~r/\s*(,@|[('`,)]|"(?:[\\].|[^\\"])*"|;.*|[^\s('"`,;)]*)(.*)/ #"
@@ -82,18 +98,28 @@ defmodule Env do
     %{parent: parent}
   end
   
-  def bind(env, name, val) do
-    Map.put(env, name, val)
+  def bind(env, name, val, tag \\ []) do
+    Map.put(env, name, {val, tag})
   end
-  
-  def fetch(env, key) do
+
+  def fetch_with_tags(env, key) do
     r = Map.get(env, key)
     case {r, Map.get(env, :parent)} do
       {nil, nil} ->
         nil
       {nil, m} ->
-        fetch(m, key)
+        fetch_with_tags(m, key)
       {v, _} ->
+        v
+    end
+  end
+  
+  def fetch(env, key) do
+    r = fetch_with_tags(env, key)
+    case r do
+      nil ->
+        nil
+      {v, tags} ->
         v
     end
   end
@@ -128,13 +154,27 @@ defmodule Evaluator do
              end,
      car: fn [[h|t]] ->
                h
+						 x ->
+							 nil
           end,
      cdr: fn [[h|t]] ->
                t
+						 x ->
+							 nil
           end,
-     ==: fn [a,b|t] ->
+     ==: fn [a,b] ->
               a == b
          end,
+		 cons: fn [h, t] when is_list(t) ->
+								[h] ++ t
+							[h, t] ->
+								[h] ++ [t]
+					 end,
+		 append: fn [h, t] when is_list(t) ->
+									h ++ t
+								[h, t] ->
+									h ++ [t]
+						 end,
      if: fn [c, t, e | _] ->
               case c do
                 true -> t
@@ -155,11 +195,18 @@ defmodule Evaluator do
     r
   end
 
+  def expand(e) do
+    expand(e, root_env)
+  end
+
   def eval(e, env) when is_boolean(e) do # true and false are boolean AND atom
     {e, env}
   end
   def eval(c, env) when is_atom(c) do
     {Env.fetch(env, c), env}
+  end
+  def eval([:quote, e], env) do
+    {e, env}
   end
   def eval([:lambda | t], env) do
     f = fn rp ->
@@ -186,7 +233,7 @@ defmodule Evaluator do
              loc_env =
                Enum.chunk(bindings, 2)
                |> Enum.reduce(Env.new(env), fn([k, b], acc) when is_atom(k) ->
-                                                {r, _} = Evaluator.eval(b, env)
+                                                {r, _} = eval(b, env)
                                                 Env.bind(acc, k, r)
                                             end)
              [{r, _} | _] = 
@@ -197,7 +244,7 @@ defmodule Evaluator do
     {f, env}
   end
   def eval([h | t], env) do
-    {f, loc_env} = Evaluator.eval(h, env)
+    {f, loc_env} = eval(h, env)
     ps =
       for p <- t do eval(p, loc_env) end
       |> Enum.map fn {v, _} -> v end
@@ -211,6 +258,97 @@ defmodule Evaluator do
   def apply(f, p) do
     Kernel.apply(f, [p])
   end
+  
+  def expand(e = [:quote | t], env) do
+    {e, env}
+  end
+  def expand([:lambda, p | body], env) do
+    ebody =  body |> Enum.map(fn e -> 
+                                   {r, _} = expand(e, env)
+                                   r
+                              end)
+    {[:lambda, p | ebody], env}
+  end
+  def expand([:define, bindings | body], env) do
+    ebindings = 
+      Enum.chunk(bindings, 2)
+      |> Enum.map(fn([k, b]) ->
+                      true = is_atom(k)
+                      {eb, _} = expand(b, env)
+                      [k, eb]
+                  end)
+      |> Enum.reverse
+      |> Enum.reduce([], fn([k, eb], acc) ->
+                             [k, eb | acc]
+                         end)
+    ebody = 
+      body
+      |> Enum.map(fn e -> 
+                       {r, _} = expand(e, env)
+                       r
+                  end)
+    {[:define, ebindings | ebody], env}
+  end
+  def expand([:defmacro, name, params, body | code], env) do
+    {ebody, _} = expand(body, env)
+    mf = [:lambda, params, ebody]
+    {p, _} = eval(mf, env)
+    local_env = Env.bind(Env.new(env), name, p, [macro: true])
+    {r, _} = expand([:lambda, [] | code], local_env)
+    {r, env}
+  end
+  def expand([:quasiquote, e], env) do
+    r = expand_quasiquote(e)
+    {r, env}
+  end
+  def expand(e = [f | args], env) when is_atom(f) do
+    case Env.fetch_with_tags(env, f) do
+      {m, tags} ->
+        case Keyword.fetch(tags, :macro) do
+          {:ok, true} ->
+						v = Evaluator.apply(m, args)
+            value = {r, _} = expand(v, env)
+            value
+          _ ->
+            ee = e |> Enum.map(fn e ->
+                                    {r, _} = expand(e, env)
+                                    r
+                               end)
+            {ee, env}
+        end
+      nil ->
+        ee = e |> Enum.map(fn e ->
+                                {r, _} = expand(e, env)
+                                r
+                           end)
+        {ee, env}
+    end
+  end
+  def expand(e, env) when is_list(e) do
+    {e |> Enum.map(fn x ->
+                        {r, _} = expand(x, env)
+                        r
+                   end), env}
+             
+  end
+  def expand(e, env) do
+    {e, env}
+  end
+
+  def expand_quasiquote([:unquote, e]) do
+    e
+  end
+  def expand_quasiquote([[:unquotesplicing, e] | t]) do
+    [:append, e, expand_quasiquote(t)]
+  end
+  def expand_quasiquote(e = [h | t]) do
+    he = expand_quasiquote(h)
+		te = expand_quasiquote(t)
+    [:cons, he, te]
+  end
+  def expand_quasiquote(e) do
+    [:quote, e]
+  end
 end
 
 defmodule Minilisp do
@@ -218,70 +356,10 @@ defmodule Minilisp do
 		tokens = Tokenizer.tokens(path)
 		Parser.parse(tokens)
 		|> Enum.reduce(nil, fn(e, _) ->
-														Evaluator.eval(e)
+                            {ast, _} = Evaluator.expand(e)
+														Evaluator.eval(ast)
 												end)
 		
 	end
 end
 
-#(define symb 42)
-#(define (f (lambda (a b) (+ a b c))) (f 1 2))
-#(lambda (a b) (+ a b)(- b a)) => [:lambda, [:a, :b], [:+, :a, :b], [:-, :b, :a]]
-#(+ 1 2, (+ 3 4)) => [:+, 1, 2, [:+, 3, 4]]
-
-# [[:lambda,
-#   [:a, :b],
-#   [:+, :a, :b]],
-#  1, 2]
-
-# [[:lambda,
-#   [:x, :y],
-#   [[:lambda,
-#     [:a, :b],
-#     [:+, :a, :x]],
-#    :x, :y]],
-#  1, 2]
-
-43 = Evaluator.eval([[:define,
-											# bindings
-											[:foo, 42,
-											 :bar, [:lambda, [:a, :b], [:+, :a, :b]]],
-											# code
-											[:+, :foo, 1],
-											[:bar, :foo, 1]]]) # invoke locally bound :bar, with :foo and 1 as paremeters
-
-6 = Evaluator.eval([[:define,
-										 # bindings
-										 [:foo, 42,
-											:bar, [:lambda, [:a, :b], [:+, :a, :b, 4]]],
-										 # code
-										 [:+, :foo, [:bar, 1, 2]],
-										 
-										 # nested :define
-										 [[:define,
-											 [:foo, 1,
-												:neh, [:lambda, [:a, :f], [:f, :a, :a]]],
-											 [:neh, :foo, :bar]
-											]
-										 ] # evaluate function returned by nested :define
-										]
-									 ] # evaluate function returned by nested :define
-									)
-
-44 =
-  Evaluator.eval([[:define,
-									 # bindings
-									 [:foo, 42,
-										:bar, [:lambda, [:a, :b, :foo], [:+, :a, :b, :foo]]], # in lambda, :foo evaluates to the parameter value, *NOT* 42 (shadowing)
-										 
-										 # code
-										 # nested :define
-										 [[:define,
-											 [:foo, 1,
-												:neh, [:lambda, [:a, :f], [:f, :a, :a, :foo]]], # :foo evaluates to 42, *NOT* 1
-												 [:neh, :foo, :bar] # :foo evaluates to 1 (shadowing)
-											]
-										 ] # evaluate function returned by nested :define
-									]
-								 ] # evaluate function returned by nested :define
-								)

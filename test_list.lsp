@@ -1,0 +1,7 @@
+(list true false 1 2)
+(car (list 1 2 3))
+(cdr (list 1 2 3))
+(cdr (cdr (list 1 2 3)))
+(car (cdr (list 1 2 3)))
+(empty? (list 1))
+(empty? (list))
