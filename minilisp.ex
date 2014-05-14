@@ -12,10 +12,10 @@ defmodule Tokenizer do
 																									 end)
 		|> Enum.reverse
   end
-  defp tokens("", acc) do
+  def tokens("", acc) do
 		acc
 	end
-  defp tokens(e, acc) do
+  def tokens(e, acc) do
 		[h | [t]] = Regex.run(re, e, [capture: :all_but_first])
 		acc = 
 			case h do
@@ -29,7 +29,7 @@ defmodule Tokenizer do
 		tokens(t, acc)
 	end
 	defp re do
-		~r/\s*(,@|[('`,)]|"(?:[\\].|[^\\"])*"|;.*|[^\s('"`,;)]*)(.*)/ #"
+		~r/\s*(~@|[('`~)]|"(?:[\\].|[^\\"])*"|;.*|[^\s('"`~;)]*)(.*)/ #"
   end
 end
 
@@ -57,27 +57,41 @@ defmodule Atomizer do
 end
 
 defmodule Parser do
+	defp to_quote(:'`') do :quasiquote end
+	defp to_quote(:'~') do :unquote end
+	defp to_quote(:'~@') do :unquotesplicing end
+	defp to_quote(:"'") do :quote end
+
 	def parse(tokens) do
 		case parse(tokens, []) do
 			{[], acc} ->
 				acc
-			{t, acc} ->
-				parse(t) ++ acc
+      {t, acc} ->
+        IO.puts ["remaining tokens: ", inspect(t)]
+        acc
 		end
 	end
 	defp parse([], acc) do
-		{[], Enum.reverse(acc)}
+		{[], acc}
+	end
+	defp parse([q, :'(' | t], acc) when q == :'`' or q == :'~' or q == :'~@' or q == :"'" do
+		{rem, ast} = parse_sexp(t, [])
+		parse(rem, acc ++ [[to_quote(q), ast]])
+	end
+	defp parse([q | t ], acc) when q == :'`' or q == :'~' or q == :'~@' or q == :"'" do
+		{rem, [ast]} = parse(t, [])
+		parse(rem, acc ++ [[to_quote(q), ast]])
 	end
 	defp parse([:'(' | t], acc) do
 		{rem, ast} = parse_sexp(t, [])
-		parse(rem, [Enum.reverse(ast) | acc])
+		parse(rem, acc ++ [ast])
 	end
-	defp parse(e = [:')' | t], acc) do
-		{e, acc}
-	end
-	defp parse([e | t], acc) do
-		{t, [e | acc]}
-	end
+  defp parse(e = [:')' | t], acc) do
+    {e, acc}
+  end
+  defp parse([e | t], acc) do
+    {t, acc ++ [e]}
+  end
 
 	defp parse_sexp([], acc) do
 		{[], acc}
