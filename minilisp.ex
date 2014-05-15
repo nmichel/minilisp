@@ -308,7 +308,7 @@ defmodule Evaluator do
     mf = [:lambda, params, ebody]
     {p, _} = eval(mf, env)
     local_env = Env.bind(Env.new(env), name, p, [macro: true])
-    {r, _} = expand([:lambda, [] | code], local_env)
+    {r, _} = expand([[:lambda, [] | code]], local_env)
     {r, env}
   end
   def expand([:quasiquote, e], env) do
