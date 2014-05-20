@@ -1,10 +1,3 @@
-# In this implementation, "if" is a builtin function, *NOT* a special form. As such, when called, 
-# all its parameters are evaluated first : condition, then and else clauses. This is NOT a good idea : it is
-# inefficient, and can yield to strange behaviour, especially when it comes to IO.
-# 
-# As a matter of fact, "if" must be a special form :)
-
-
 defmodule Tokenizer do
   def tokens(path) do
 		Enum.reduce(File.stream!(path, [], :line), [], fn l, acc ->
@@ -79,7 +72,7 @@ defmodule Parser do
 		parse(rem, acc ++ [[to_quote(q), ast]])
 	end
 	defp parse([q | t ], acc) when q == :'`' or q == :'~' or q == :'~@' or q == :"'" do
-		{rem, ast} = parse(t, [])
+		{rem, [ast]} = parse(t, []) # Beware of the [ast] (*not* ast)
 		parse(rem, acc ++ [[to_quote(q), ast]])
 	end
 	defp parse([:'(' | t], acc) do
@@ -189,12 +182,6 @@ defmodule Evaluator do
 								[h, t] ->
 									h ++ [t]
 						 end,
-     if: fn [c, t, e | _] ->
-              case c do
-                true -> t
-                _ -> e
-              end
-         end,
      print: fn p ->
                  IO.puts [inspect(p)]
             end
@@ -251,6 +238,13 @@ defmodule Evaluator do
          |> List.first
     end
   end
+  def eval([:if, c, t, e], env) do
+    if Evaluator.eval(c, env) do
+      Evaluator.eval(t, env)
+    else
+      Evaluator.eval(e, env)
+    end
+  end
   def eval([h | t], env) do
     f = eval(h, env)
     ps = for p <- t do eval(p, env) end
@@ -284,6 +278,9 @@ defmodule Evaluator do
                          end)
     ebody = for e <- body do expand(e, env) end
     [:define, ebindings | ebody]
+  end
+  def expand([:if, c, t, e], env) do
+    [:if | for i <- [c, t, e] do expand(i, env) end]
   end
   def expand([:defmacro, name, params, body | code], env) do
     ebody = expand(body, env)
