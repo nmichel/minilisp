@@ -44,5 +44,26 @@
                        neh (lambda (a f) (f a a foo)))
                 (neh foo bar)))))
           44)
+
+    (defmacro seq (body)
+      (if (empty? (cdr body))
+          (quasiquote ~(car body)) ;; can't use ` here because the parser is flawed
+          `((lambda () ~(car body) (seq ~(cdr body)))))
+
+      (seq ((print "coucou")
+            (print "toto"))
+           )
+      )
+    
+    ((define (foo (lambda (f x)
+                    ((lambda ()
+                       (print "x: " x)
+                       (if (empty? (cdr x))
+                           x
+                           (f f (cdr x)))
+                       ))))
+
+       (foo foo (list 1 2 3))
+       ))
     )
   )

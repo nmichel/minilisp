@@ -79,7 +79,7 @@ defmodule Parser do
 		parse(rem, acc ++ [[to_quote(q), ast]])
 	end
 	defp parse([q | t ], acc) when q == :'`' or q == :'~' or q == :'~@' or q == :"'" do
-		{rem, [ast]} = parse(t, [])
+		{rem, ast} = parse(t, [])
 		parse(rem, acc ++ [[to_quote(q), ast]])
 	end
 	defp parse([:'(' | t], acc) do
@@ -205,8 +205,7 @@ defmodule Evaluator do
   end
 
   def eval(e) do
-    {r, _} = eval(e, root_env)
-    r
+    eval(e, root_env)
   end
 
   def expand(e) do
@@ -214,59 +213,51 @@ defmodule Evaluator do
   end
 
   def eval(e, env) when is_boolean(e) do # true and false are boolean AND atom
-    {e, env}
+    e
   end
   def eval(c, env) when is_atom(c) do
-    {Env.fetch(env, c), env}
+    Env.fetch(env, c)
   end
   def eval([:quote, e], env) do
-    {e, env}
+    e
   end
   def eval([:lambda | t], env) do
-    f = fn rp ->
-             [fp | el] = t
-             # Build a new environment with formal param names bound to concrete values
-             # 
-             loc_env = 
-               Enum.zip(fp, rp)
-               |> Enum.reduce(Env.new(env), fn({k, v}, acc) ->
-                                                Env.bind(acc, k, v)
-                                            end)
-             # Evaluation of the function body
-             # lambda return value is the evaluation value of the last expression
-             # 
-             [{r, _} | _] = 
-               for e <- el do Evaluator.eval(e, loc_env) end
-               |> Enum.reverse
-             r
-        end
-    {f, env}
+    fn rp ->
+         [fp | el] = t
+         # Build a new environment with formal param names bound to concrete values
+         # 
+         loc_env = 
+           Enum.zip(fp, rp)
+           |> Enum.reduce(Env.new(env), fn({k, v}, acc) ->
+                                            Env.bind(acc, k, v)
+                                        end)
+         # Evaluation of the function body
+         # lambda return value is the evaluation value of the last expression
+         # 
+         for e <- el do Evaluator.eval(e, loc_env) end
+         |> Enum.reverse
+         |> List.first
+    end
   end
   def eval([:define, bindings | code], env) do
-    f = fn _ ->
-             loc_env =
-               Enum.chunk(bindings, 2)
-               |> Enum.reduce(Env.new(env), fn([k, b], acc) when is_atom(k) ->
-                                                {r, _} = eval(b, env)
-                                                Env.bind(acc, k, r)
-                                            end)
-             [{r, _} | _] = 
-               for e <- code do Evaluator.eval(e, loc_env) end
-               |> Enum.reverse
-             r
-        end
-    {f, env}
+    fn _ ->
+         loc_env =
+           Enum.chunk(bindings, 2)
+           |> Enum.reduce(Env.new(env), fn([k, b], acc) when is_atom(k) ->
+                                            Env.bind(acc, k, eval(b, env))
+                                        end)
+         for e <- code do Evaluator.eval(e, loc_env) end
+         |> Enum.reverse
+         |> List.first
+    end
   end
   def eval([h | t], env) do
-    {f, loc_env} = eval(h, env)
-    ps =
-      for p <- t do eval(p, loc_env) end
-      |> Enum.map fn {v, _} -> v end
-    r = Evaluator.apply(f, ps)
-    {r, env}
+    f = eval(h, env)
+    ps = for p <- t do eval(p, env) end
+    Evaluator.apply(f, ps)
   end
   def eval(c, env) do
-    {c, env}
+    c
   end
 
   def apply(f, p) do
@@ -274,46 +265,35 @@ defmodule Evaluator do
   end
   
   def expand(e = [:quote | t], env) do
-    {e, env}
+    e
   end
   def expand([:lambda, p | body], env) do
-    ebody =  body |> Enum.map(fn e -> 
-                                   {r, _} = expand(e, env)
-                                   r
-                              end)
-    {[:lambda, p | ebody], env}
+    ebody = for e <- body do expand(e, env) end
+    [:lambda, p | ebody]
   end
   def expand([:define, bindings | body], env) do
     ebindings = 
       Enum.chunk(bindings, 2)
       |> Enum.map(fn([k, b]) ->
                       true = is_atom(k)
-                      {eb, _} = expand(b, env)
-                      [k, eb]
+                      [k, expand(b, env)]
                   end)
       |> Enum.reverse
       |> Enum.reduce([], fn([k, eb], acc) ->
                              [k, eb | acc]
                          end)
-    ebody = 
-      body
-      |> Enum.map(fn e -> 
-                       {r, _} = expand(e, env)
-                       r
-                  end)
-    {[:define, ebindings | ebody], env}
+    ebody = for e <- body do expand(e, env) end
+    [:define, ebindings | ebody]
   end
   def expand([:defmacro, name, params, body | code], env) do
-    {ebody, _} = expand(body, env)
+    ebody = expand(body, env)
     mf = [:lambda, params, ebody]
-    {p, _} = eval(mf, env)
+    p = eval(mf, env)
     local_env = Env.bind(Env.new(env), name, p, [macro: true])
-    {r, _} = expand([[:lambda, [] | code]], local_env)
-    {r, env}
+    expand([[:lambda, [] | code]], local_env)
   end
   def expand([:quasiquote, e], env) do
-    r = expand_quasiquote(e)
-    {r, env}
+    expand_quasiquote(e)
   end
   def expand(e = [f | args], env) when is_atom(f) do
     case Env.fetch_with_tags(env, f) do
@@ -321,32 +301,19 @@ defmodule Evaluator do
         case Keyword.fetch(tags, :macro) do
           {:ok, true} ->
 						v = Evaluator.apply(m, args)
-            value = {r, _} = expand(v, env)
-            value
+            expand(v, env)
           _ ->
-            ee = e |> Enum.map(fn e ->
-                                    {r, _} = expand(e, env)
-                                    r
-                               end)
-            {ee, env}
+            for x <- e do expand(x, env) end
         end
       nil ->
-        ee = e |> Enum.map(fn e ->
-                                {r, _} = expand(e, env)
-                                r
-                           end)
-        {ee, env}
+        for x <- e do expand(x, env) end
     end
   end
   def expand(e, env) when is_list(e) do
-    {e |> Enum.map(fn x ->
-                        {r, _} = expand(x, env)
-                        r
-                   end), env}
-             
+    for x <- e do expand(x, env) end
   end
   def expand(e, env) do
-    {e, env}
+    e
   end
 
   def expand_quasiquote([:unquote, e]) do
@@ -370,7 +337,7 @@ defmodule Minilisp do
 		tokens = Tokenizer.tokens(path)
 		Parser.parse(tokens)
 		|> Enum.reduce(nil, fn(e, _) ->
-                            {ast, _} = Evaluator.expand(e)
+                            ast = Evaluator.expand(e)
 														Evaluator.eval(ast)
 												end)
 		
