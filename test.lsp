@@ -8,7 +8,20 @@
           `((~@(car body) (seq ~(cdr body))))
           `((lambda () ~(car body) (seq ~(cdr body))))))
 
-  (seq ((defmacro cond (body)
+  (seq ((define (step (lambda (n l)
+                        ((define (step-n (lambda (f curr n l)
+                                           (if (empty? l)
+                                               l
+                                               (if (== curr n)
+                                                   (cons (car l) (f f 1 n (cdr l)))
+                                                 (f f (+ curr 1) n (cdr l))))))
+                           (step-n step-n 1 n l))
+                        )))
+          )
+
+        (print "step: " (step 2 '(1 2 3 4)))
+        
+        (defmacro cond (body)
           ;; Expand a list of (cond, code) pair into a structure of nested "if/else" forms.
    
           (if (empty? body)
