@@ -2,7 +2,7 @@
 ;; 
 (defmacro seq (body)
   (if (empty? (cdr body))
-      (quasiquote ~(car body)) ;; can't use ` here because the parser is flawed
+      `~(car body)
       (if (or (== (car (car body)) 'define)
               (== (car (car body)) 'defmacro))
           `((~@(car body) (seq ~(cdr body))))
@@ -16,10 +16,20 @@
                                                    (cons (car l) (f f 1 n (cdr l)))
                                                  (f f (+ curr 1) n (cdr l))))))
                            (step-n step-n 1 n l))
-                        )))
-          )
+                         ))
+                 map (lambda (fn l)
+                       ((define (map- (lambda (cb fn l)
+                                        (if (empty? l)
+                                            l
+                                          (cons (fn (car l)) (cb cb fn (cdr l))))
+                                        ))
+                          (map- map- fn l)
+                          )))
+                 ))
 
         (print "step: " (step 2 '(1 2 3 4)))
+        (print "map: " (map (lambda (e) (+ e e)) '(1 2 3 4)))
+        (print "combine: " (map (lambda (e) (+ e e)) (step 2 '(1 2 3 4))))
         
         (defmacro cond (body)
           ;; Expand a list of (cond, code) pair into a structure of nested "if/else" forms.

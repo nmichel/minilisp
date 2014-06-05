@@ -50,54 +50,47 @@ defmodule Atomizer do
 end
 
 defmodule Parser do
+  @moduledoc """
+  expr -> ('\''|'`'|'~'|'~@') expr
+        | '(' expr expr* ')'
+        | atom
+  """
+
 	defp to_quote(:'`') do :quasiquote end
 	defp to_quote(:'~') do :unquote end
 	defp to_quote(:'~@') do :unquotesplicing end
 	defp to_quote(:"'") do :quote end
 
-	def parse(tokens) do
-		case parse(tokens, []) do
-			{[], acc} ->
-				acc
-      {t, acc} ->
-        IO.puts ["remaining tokens: ", inspect(t)]
-        acc
-		end
-	end
-	defp parse([], acc) do
-		{[], acc}
-	end
-	defp parse([q, :'(' | t], acc) when q == :'`' or q == :'~' or q == :'~@' or q == :"'" do
-		{rem, ast} = parse_sexp(t, [])
-		parse(rem, acc ++ [[to_quote(q), ast]])
-	end
-	defp parse([q | t ], acc) when q == :'`' or q == :'~' or q == :'~@' or q == :"'" do
-		{rem, [ast]} = parse(t, []) # Beware of the [ast] (*not* ast)
-		parse(rem, acc ++ [[to_quote(q), ast]])
-	end
-	defp parse([:'(' | t], acc) do
-		{rem, ast} = parse_sexp(t, [])
-		parse(rem, acc ++ [ast])
-	end
-  defp parse(e = [:')' | t], acc) do
-    {e, acc}
-  end
-  defp parse([e | t], acc) do
-    {t, acc ++ [e]}
+  def parse(tokens) do
+    parse(tokens, [])
   end
 
-	defp parse_sexp([], acc) do
-		{[], acc}
-	end
-	defp parse_sexp(t, acc) do
-		{rem, ast} = parse(t, acc)
-		case rem do
-			[:')' | r] ->
-				{r, ast}
-			_ ->
-				parse_sexp(rem, ast)
-		end
-	end
+  def parse([], acc) do
+    acc
+  end
+  def parse(tokens, acc) do
+    {ast, r} = parse_exp(tokens)
+    parse(r, acc ++ [ast])
+  end
+
+  def parse_exp([q | tokens])  when q == :'`' or q == :'~' or q == :'~@' or q == :"'" do
+    {ast, r} = parse_exp(tokens)
+    {[to_quote(q), ast], r}
+  end
+  def parse_exp([:'(' | tokens])do
+    parse_sexp(tokens, [])
+  end
+  def parse_exp([t | r]) do
+    {t, r}
+  end
+  
+  def parse_sexp([:')' | tokens], acc) do
+    {acc, tokens}
+  end
+  def parse_sexp(tokens, acc) do
+    {ast, r} = parse_exp(tokens)
+		parse_sexp(r, acc ++ [ast])
+  end
 end
 
 defmodule Env do
