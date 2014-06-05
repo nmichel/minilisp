@@ -8,5 +8,6 @@ build:
 clean:
 	rm -f $(TARGETDIR)/*.beam
 
-SOURCES=$(wildcard *.ex)
+SOURCESDIR=./src
+SOURCES=$(wildcard $(SOURCESDIR)/*.ex)
 TARGETDIR=./ebin
