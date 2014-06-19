@@ -29,21 +29,21 @@ end
 defmodule Atomizer do
 	def atom("+") do :+ end # Corner cases, because binary_to_integer("+") => 0
 	def atom("-") do :- end # same
-	def atom(e = <<?", t::binary>>) do #"
+	def atom(<<?", t::binary>>) do #"
     l = byte_size(t)-1
 		<<s :: [size(l), binary], "\"">> = t
 		s
 	end
 	def atom(e) do
 		try do
-			binary_to_float(e)
+			String.to_float(e)
 		catch 
 			_, _ ->
 				try do
-					binary_to_integer(e)
+					String.to_integer(e)
 				catch
 					_, _ ->
-						binary_to_atom(e)
+						String.to_atom(e)
 				end
 		end
 	end
@@ -119,7 +119,7 @@ defmodule Env do
     case r do
       nil ->
         nil
-      {v, tags} ->
+      {v, _tags} ->
         v
     end
   end
@@ -152,14 +152,14 @@ defmodule Evaluator do
                 [[_h|_t]]->
                   false
              end,
-     car: fn [[h|t]] ->
+     car: fn [[h|_t]] ->
                h
-						 x ->
+						 _ ->
 							 nil
           end,
-     cdr: fn [[h|t]] ->
+     cdr: fn [[_h|t]] ->
                t
-						 x ->
+						 _ ->
 							 nil
           end,
      ==: fn [a,b] ->
@@ -192,13 +192,13 @@ defmodule Evaluator do
     expand(e, root_env)
   end
 
-  def eval(e, env) when is_boolean(e) do # true and false are boolean AND atom
+  def eval(e, _env) when is_boolean(e) do # true and false are boolean AND atom
     e
   end
   def eval(c, env) when is_atom(c) do
     Env.fetch(env, c)
   end
-  def eval([:quote, e], env) do
+  def eval([:quote, e], _env) do
     e
   end
   def eval([:lambda | t], env) do
@@ -243,7 +243,7 @@ defmodule Evaluator do
     ps = for p <- t do eval(p, env) end
     Evaluator.apply(f, ps)
   end
-  def eval(c, env) do
+  def eval(c, _env) do
     c
   end
 
@@ -251,7 +251,7 @@ defmodule Evaluator do
     Kernel.apply(f, [p])
   end
   
-  def expand(e = [:quote | t], env) do
+  def expand(e = [:quote | _], _env) do
     e
   end
   def expand([:lambda, p | body], env) do
@@ -282,7 +282,7 @@ defmodule Evaluator do
     local_env = Env.bind(Env.new(env), name, p, [macro: true])
     expand([[:lambda, [] | code]], local_env)
   end
-  def expand([:quasiquote, e], env) do
+  def expand([:quasiquote, e], _env) do
     expand_quasiquote(e)
   end
   def expand(e = [f | args], env) when is_atom(f) do
@@ -302,7 +302,7 @@ defmodule Evaluator do
   def expand(e, env) when is_list(e) do
     for x <- e do expand(x, env) end
   end
-  def expand(e, env) do
+  def expand(e, _env) do
     e
   end
 
@@ -312,7 +312,7 @@ defmodule Evaluator do
   def expand_quasiquote([[:unquotesplicing, e] | t]) do
     [:append, e, expand_quasiquote(t)]
   end
-  def expand_quasiquote(e = [h | t]) do
+  def expand_quasiquote([h | t]) do
     he = expand_quasiquote(h)
 		te = expand_quasiquote(t)
     [:cons, he, te]
