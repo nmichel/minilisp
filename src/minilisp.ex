@@ -270,7 +270,7 @@ defmodule Evaluator do
                              [k, eb | acc]
                          end)
     ebody = for e <- body do expand(e, env) end
-    [:define, ebindings | ebody]
+    [[:define, ebindings | ebody]]
   end
   def expand([:if, c, t, e], env) do
     [:if | for i <- [c, t, e] do expand(i, env) end]
