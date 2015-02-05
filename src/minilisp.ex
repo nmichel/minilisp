@@ -1,52 +1,54 @@
 defmodule Tokenizer do
   def tokens(path) do
-		Enum.reduce(File.stream!(path, [], :line), [], fn l, acc ->
-																												tokens(l, acc)
-																									 end)
-		|> Enum.reverse
+    path
+    |> File.stream!([], :line)
+    |> Enum.reduce([], fn l, acc ->
+                            tokens(l, acc)
+                       end)
+    |> Enum.reverse
   end
   def tokens("", acc) do
-		acc
-	end
+    acc
+  end
   def tokens(e, acc) do
-		[h | [t]] = Regex.run(re, e, [capture: :all_but_first])
-		acc = 
-			case h do
-				"" ->
-					acc
-				<<";",  _::bitstring>> ->
-					acc
-				_ ->
-					[Atomizer.atom(h) | acc]
-			end
-		tokens(t, acc)
-	end
-	defp re do
-		~r/\s*(~@|[('`~)]|"(?:[\\].|[^\\"])*"|;.*|[^\s('"`~;)]*)(.*)/ #"
+    [h | [t]] = Regex.run(re, e, [capture: :all_but_first])
+    acc = 
+      case h do
+        "" ->
+          acc
+        <<";",  _::bitstring>> ->
+          acc
+        _ ->
+          [Atomizer.atom(h) | acc]
+      end
+    tokens(t, acc)
+  end
+  defp re do
+    ~r/\s*(~@|[('`~)]|"(?:[\\].|[^\\"])*"|;.*|[^\s('"`~;)]*)(.*)/ #"
   end
 end
 
 defmodule Atomizer do
-	def atom("+") do :+ end # Corner cases, because binary_to_integer("+") => 0
-	def atom("-") do :- end # same
-	def atom(<<?", t::binary>>) do #"
+  def atom("+") do :+ end # Corner cases, because binary_to_integer("+") => 0
+  def atom("-") do :- end # same
+  def atom(<<?", t::binary>>) do #"
     l = byte_size(t)-1
-		<<s :: [size(l), binary], "\"">> = t
-		s
-	end
-	def atom(e) do
-		try do
-			String.to_float(e)
-		catch 
-			_, _ ->
-				try do
-					String.to_integer(e)
-				catch
-					_, _ ->
-						String.to_atom(e)
-				end
-		end
-	end
+    <<s :: binary()-size(l), "\"">> = t
+    s
+  end
+  def atom(e) do
+    try do
+      String.to_float(e)
+    catch 
+      _, _ ->
+        try do
+          String.to_integer(e)
+        catch
+          _, _ ->
+            String.to_atom(e)
+        end
+    end
+  end
 end
 
 defmodule Parser do
@@ -56,10 +58,10 @@ defmodule Parser do
         | atom
   """
 
-	defp to_quote(:'`') do :quasiquote end
-	defp to_quote(:'~') do :unquote end
-	defp to_quote(:'~@') do :unquotesplicing end
-	defp to_quote(:"'") do :quote end
+  defp to_quote(:'`') do :quasiquote end
+  defp to_quote(:'~') do :unquote end
+  defp to_quote(:'~@') do :unquotesplicing end
+  defp to_quote(:"'") do :quote end
 
   def parse(tokens) do
     parse(tokens, [])
@@ -89,7 +91,7 @@ defmodule Parser do
   end
   def parse_sexp(tokens, acc) do
     {ast, r} = parse_exp(tokens)
-		parse_sexp(r, acc ++ [ast])
+    parse_sexp(r, acc ++ [ast])
   end
 end
 
@@ -154,27 +156,27 @@ defmodule Evaluator do
              end,
      car: fn [[h|_t]] ->
                h
-						 _ ->
-							 nil
+             _ ->
+               nil
           end,
      cdr: fn [[_h|t]] ->
                t
-						 _ ->
-							 nil
+             _ ->
+               nil
           end,
      ==: fn [a,b] ->
               a == b
          end,
-		 cons: fn [h, t] when is_list(t) ->
-								[h] ++ t
-							[h, t] ->
-								[h] ++ [t]
-					 end,
-		 append: fn [h, t] when is_list(t) ->
-									h ++ t
-								[h, t] ->
-									h ++ [t]
-						 end,
+     cons: fn [h, t] when is_list(t) ->
+                [h] ++ t
+              [h, t] ->
+                [h] ++ [t]
+           end,
+     append: fn [h, t] when is_list(t) ->
+                  h ++ t
+                [h, t] ->
+                  h ++ [t]
+             end,
      print: fn p ->
                  IO.puts [inspect(p)]
             end
@@ -290,7 +292,7 @@ defmodule Evaluator do
       {m, tags} ->
         case Keyword.fetch(tags, :macro) do
           {:ok, true} ->
-						v = Evaluator.apply(m, args)
+            v = Evaluator.apply(m, args)
             expand(v, env)
           _ ->
             for x <- e do expand(x, env) end
@@ -314,7 +316,7 @@ defmodule Evaluator do
   end
   def expand_quasiquote([h | t]) do
     he = expand_quasiquote(h)
-		te = expand_quasiquote(t)
+    te = expand_quasiquote(t)
     [:cons, he, te]
   end
   def expand_quasiquote(e) do
@@ -323,14 +325,11 @@ defmodule Evaluator do
 end
 
 defmodule Minilisp do
-	def play(path) do
-		tokens = Tokenizer.tokens(path)
-		Parser.parse(tokens)
-		|> Enum.reduce(nil, fn(e, _) ->
-                            ast = Evaluator.expand(e)
-														Evaluator.eval(ast)
-												end)
-		
-	end
+  def play(path) do
+    path
+    |> Tokenizer.tokens
+    |> Parser.parse
+    |> Enum.map &(&1 |> Evaluator.expand |> Evaluator.eval)
+  end
 end
 
