@@ -281,7 +281,7 @@ defmodule Evaluator do
     ebody = expand(body, env)
     mf = [:lambda, params, ebody]
     p = eval(mf, env)
-    local_env = Env.bind(Env.new(env), name, p, [macro: true])
+    local_env = env |> Env.new |> Env.bind(name, p, [macro: true])
     expand([[:lambda, [] | code]], local_env)
   end
   def expand([:quasiquote, e], _env) do
@@ -329,7 +329,15 @@ defmodule Minilisp do
     path
     |> Tokenizer.tokens
     |> Parser.parse
-    |> Enum.map &(&1 |> Evaluator.expand |> Evaluator.eval)
+    |> Enum.map(&(&1 |> Evaluator.expand |> Evaluator.eval))
+  end
+  
+  def eval(expr) do
+    expr
+    |> Tokenizer.tokens([])
+    |> Enum.reverse
+    |> Parser.parse
+    |> Enum.map(&(&1 |> Evaluator.expand |> Evaluator.eval))
   end
 end
 
